@@ -1,6 +1,6 @@
-<# 
+<#
 ScriptName: NessusPro_v7_Report_Exporter_Tool.ps1
-PSVersion:  5.1
+PSVersion:  7
 Purpose:    Powershell script that use REST methods to obtain report automation tasks.
 Created:    Sept 2018.
 Comments:
@@ -16,18 +16,6 @@ Github:     https://github.com/Pwd9000-ML#>
 #Ensure correct execution policy is set to run script. Administrative permission is required to Set-ExecutionPolicy.
 #Set-ExecutionPolicy Bypass
 
-add-type @"
-	using System.Net;
-	using System.Security.Cryptography.X509Certificates;
-	public class TrustAllCertsPolicy : ICertificatePolicy {
-		public bool CheckValidationResult(
-			ServicePoint srvPoint, X509Certificate certificate,
-			WebRequest request, int certificateProblem) {
-				return true;
-				}
-	}
-"@
-[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
 [System.Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 #------------------Input Variables-----------------------------------------------------------------
@@ -45,8 +33,10 @@ $UserNameBody = convertto-json (New-Object PSObject -Property @{username = $user
 #------------------Create URI's--------------------------------------------------------------------
 $SessionAPIurl = "/session"
 $ScansAPIurl = "/scans"
+$FolderAPIurl = "/folders"
 $SessionUri = $baseurl + $SessionAPIurl
 $ScansUri = $baseurl + $ScansAPIurl
+$FolderUri = $Baseurl + $FolderAPIurl
 
 #------------------Stage props to obtain session token (Parameters)--------------------------------
 $session = @{
@@ -57,29 +47,39 @@ $session = @{
 }
 
 #------------------Commit session props for token header X-cookie----------------------------------
-$TokenResponse = Invoke-RestMethod @session
+$TokenResponse = Invoke-RestMethod @session -SkipCertificateCheck
 if ($TokenResponse) {
     $Header = @{"X-Cookie" = "token=" + $TokenResponse.token}
 }
-else { 
+else {
     Write-host ""
     Write-host "Error occured obtaining session token. Script Terminating... Please ensure Username and Password Correct." -ForegroundColor Red
     Start-Sleep -s 20
     Exit
 }
 
-#------------------Output completed scans----------------------------------------------------------
-$Scanscompleted = (Invoke-RestMethod -Uri $ScansUri -Headers $Header -Method $GETMethod -ContentType "application/json").scans | 
-				? {$_.status -eq "completed"} | 
-				Select-Object @{Name = "Scan Name"; Expression = {$_.Name}},
-@{Name = "Scan Status"; Expression = {$_.Status}},
-@{Name = "Id"; Expression = {$_.id}} | 
+# list folders
+$Folders = (Invoke-RestMethod -Uri $FolderUri -Headers $Header -Method $GETMethod -ContentType "application/json"  -SkipCertificateCheck).folders |
+    Select-Object @{Name = "Folder Name"; Expression = { $_.Name } },
+@{Name = "Id"; Expression = { $_.id } } |
     Format-Table -AutoSize
-$Scansnotcompleted = (Invoke-RestMethod -Uri $ScansUri -Headers $Header -Method $GETMethod -ContentType "application/json").scans | 
-				? {$_.status -ne "completed"} | 
+
+$Folders
+$folder = Read-Host "Enter id of the folder? (number))"
+
+
+#------------------Output completed scans----------------------------------------------------------
+$Scanscompleted = (Invoke-RestMethod -Uri $ScansUri -Headers $Header -Method $GETMethod -ContentType "application/json"  -SkipCertificateCheck).scans |
+				Where-Object {$_.status -eq "completed" -and $_.folder_id -eq $folder} |
 				Select-Object @{Name = "Scan Name"; Expression = {$_.Name}},
 @{Name = "Scan Status"; Expression = {$_.Status}},
-@{Name = "Id"; Expression = {$_.id}} | 
+@{Name = "Id"; Expression = {$_.id}} |
+    Format-Table -AutoSize
+$Scansnotcompleted = (Invoke-RestMethod -Uri $ScansUri -Headers $Header -Method $GETMethod -ContentType "application/json" -SkipCertificateCheck).scans |
+				Where-Object {$_.status -ne "completed" -and $_.folder_id -eq $folder} |
+				Select-Object @{Name = "Scan Name"; Expression = {$_.Name}},
+@{Name = "Scan Status"; Expression = {$_.Status}},
+@{Name = "Id"; Expression = {$_.id}} |
     Format-Table -AutoSize
 
 Write-Host "-------------------------------------------------------" -ForegroundColor Green
@@ -94,7 +94,7 @@ $Scansnotcompleted
 
 #------------------Export Completed Scans (Y/N)----------------------------------------------------
 $answerexport = Read-Host "Do you want to export the completed Scans? (Y/N)"
-If ($answerexport -eq "Y") { 
+If ($answerexport -eq "Y") {
     $continue = $True
     Write-Host "----------------------------"
     Write-Host "-Enter Report Export Format-"
@@ -102,14 +102,26 @@ If ($answerexport -eq "Y") {
     Write-Host ""
     Write-Host "The ""nessus"" format selection will export reports to XML"
     $Format = Read-Host "Enter selection: (nessus OR csv OR pdf)"
-    $ExportBody = convertto-json (New-Object PSObject -Property @{format = "$Format"})
+    $ExportBody = convertto-json (New-Object PSObject -Property @{
+    format = "$Format"
+    template_id = "121"
+        "filter.0.quality"="neq"
+        "filter.0.filter"="severity"
+        "filter.0.value"="0"
+        "filter.1.quality" = "neq"
+        "filter.1.filter"  = "severity"
+        "filter.1.value"   = "1"
+        "filter.search_type"="and"
+})
+
+
     Write-Host "Checking Status...."
 
     #------------------POST Export Requests------------------------------------------------------------
     $StatusArray = @()
-    (Invoke-RestMethod -Uri $ScansUri -Headers $Header -Method $GETMethod -ContentType "application/json").scans |
-        ? {$_.status -eq "completed"} | select-object id, name |
-        % {
+    (Invoke-RestMethod -Uri $ScansUri -Headers $Header -Method $GETMethod -ContentType "application/json" -SkipCertificateCheck).scans |
+        Where-Object {$_.status -eq "completed" -and $_.folder_id -eq $folder} | select-object id, name |
+        ForEach-Object {
         $Exportfile = @{
             Uri         = "$ScansUri" + "/" + $_.id + "/export"
             ContentType = $ContentType
@@ -117,7 +129,7 @@ If ($answerexport -eq "Y") {
             Method      = $POSTMethod
             Body        = $ExportBody
         }
-        $file = (Invoke-RestMethod @Exportfile).file
+        $file = (Invoke-RestMethod @Exportfile -SkipCertificateCheck).file
         $ScanName = $_.name
         $StatusUri = "$ScansUri" + "/" + $_.id + "/export/" + "$file" + "/status"
         $DownloadUri = "$ScansUri" + "/" + $_.id + "/export/" + "$file" + "/download"
@@ -127,15 +139,15 @@ If ($answerexport -eq "Y") {
     #------------------Check Status of Export requests-------------------------------------------------
     Start-Sleep -s 125
     $Count = 0
-    $StatusArray.StatusUri | % {
-        (Invoke-RestMethod -Uri "$_" -ContentType $ContentType -Headers $Header -Method $GETMethod).status | 
-            % {
+    $StatusArray.StatusUri | ForEach-Object {
+        (Invoke-RestMethod -Uri "$_" -ContentType $ContentType -Headers $Header -Method $GETMethod -SkipCertificateCheck).status |
+            ForEach-Object {
             If ($_ -ne "ready") {
                 $Count = $Count + 1
                 Write-Host "Scan $Count not Ready. Scan is $_. Pausing for 30seconds..." -ForegroundColor Red
                 Start-Sleep -s 30
             }
-            else { 
+            else {
                 $Count = $Count + 1
                 Write-Host "Scan $Count ready for export" -ForegroundColor Green
             }
@@ -145,21 +157,21 @@ If ($answerexport -eq "Y") {
     Write-Host "Initiating Scan Export. Please wait for WebRequests to Complete..." -ForegroundColor Green
     Write-Host ""
     Start-Sleep -s 5
-											  
+
     #------------------Download the Reports------------------------------------------------------------
     $ExportUri = $StatusArray.DownloadUri
     $outputs = $StatusArray.ScanName
-    foreach ($i in 0..($ExportUri.Count - 1)) { 
-        Invoke-WebRequest -Uri $ExportUri[$i] -ContentType $ContentType -Headers $Header -Method $GETMethod -OutFile "C:\Temp\$($outputs[$i]).$format"                 
+    foreach ($i in 0..($ExportUri.Count - 1)) {
+        Invoke-WebRequest -Uri $ExportUri[$i] -ContentType $ContentType -Headers $Header -Method $GETMethod -OutFile "C:\Temp\$($outputs[$i]).$format" -SkipCertificateCheck
     }
     Get-childitem c:\Temp\* -include *.nessus -Recurse | Rename-Item -NewName {$_.name -replace 'nessus', 'xml'}
     Write-Host ""
     Write-Host "Scans have been exported to ""C:\Temp\""" -ForegroundColor Green
     Start-Sleep -s 10
 }
-else { 
+else {
     Write-Host "You selected not to export completed Scans"
     Write-Host "This script will Terminate in 10seconds"
     Start-Sleep -s 10
-}                   
+}
 #------------------Script END----------------------------------------------------------------------
