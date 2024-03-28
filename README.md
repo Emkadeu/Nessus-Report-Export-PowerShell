@@ -1,10 +1,11 @@
-# NessusPro V7 - Nessus IO - Report Exporter Tool (Powershell)
+# NessusPro V10 - Nessus IO - Report Exporter Tool (Powershell)
 
 ## Notes
 - Updated for latest Powershell and Nessus Version.
 - Added filters.
 - Added folder choice.
 - Thanks to Paperclips for his work.
+- Tested only with latest Nessus Professional version (10.7.1)
 
 **ScriptName:** NessusPro_v7_Report_Exporter_Tool.ps1  
 **PSVersion:**  7  
