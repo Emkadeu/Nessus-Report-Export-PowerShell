@@ -13,6 +13,7 @@
 **Author:**     Paperclips.  
 **Email:**      Pwd9000@hotmail.co.uk  
 **Created:**    Sept 2018  
+**Updated:**    Apr 2024
 
 ## Description
 
@@ -27,6 +28,7 @@ The user will be prompted for the following input criteria when the script is ru
 - Enter a full Nessus Scanner URL incl port (e.g. <https://NessusServerFQDN:8834> ).  
 - Enter a valid Username that has access to the nessus scanner URL provided.  
 - Enter a valid Password to the corresponding Username provided.  
+- Enter a folder id.  
 
 ## Comments
 
